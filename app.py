@@ -1,10 +1,20 @@
-from flask import Flask, render_template_string, request, redirect, url_for, flash, session
+from flask import (
+    Flask,
+    render_template_string,
+    request,
+    redirect,
+    url_for,
+    flash,
+    session,
+)
 from datetime import datetime, date, timedelta
 import sqlite3
 import os
 
 app = Flask(__name__)
-app.secret_key = "change-this-secret-key"  # needed for login sessions
+
+# Change this to something random in production
+app.secret_key = "change-this-secret-key"
 
 DB_PATH = "prison_visits.db"
 
@@ -18,7 +28,8 @@ def get_db():
 def init_db():
     conn = get_db()
     c = conn.cursor()
-    c.execute("""
+    c.execute(
+        """
         CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             visit_date DATE NOT NULL,
@@ -26,14 +37,17 @@ def init_db():
             email TEXT NOT NULL,
             created_at DATETIME NOT NULL
         )
-    """)
+    """
+    )
     conn.commit()
     conn.close()
 
 
 def next_saturdays(n=8):
+    """Return list of next n Saturdays as date objects."""
     today = date.today()
-    days_ahead = (5 - today.weekday()) % 7  # Saturday = 5
+    # weekday(): Monday=0 ... Sunday=6; Saturday=5
+    days_ahead = (5 - today.weekday()) % 7
     first_sat = today + timedelta(days=days_ahead)
     sats = []
     d = first_sat
@@ -44,35 +58,45 @@ def next_saturdays(n=8):
 
 
 # ---------------------------
-# ADMIN LOGIN
+# ADMIN LOGIN / LOGOUT
 # ---------------------------
+
+
 @app.route("/admin-login", methods=["GET", "POST"])
 def admin_login():
+    error = None
+
     if request.method == "POST":
         password = request.form.get("password", "")
-        if password == os.environ.get("ADMIN_PASSWORD"):
+        expected = os.environ.get("ADMIN_PASSWORD", "")
+
+        if expected and password == expected:
             session["admin"] = True
             return redirect(url_for("admin"))
         else:
-            flash(("error", "Incorrect password."))
-            return redirect(url_for("admin_login"))
+            error = "Incorrect password."
 
     template = """
     <!doctype html>
     <html>
     <body style="font-family: sans-serif; max-width: 400px; margin: 40px auto;">
         <h2>Admin Login</h2>
+
+        {% if error %}
+          <p style="color:red;">{{ error }}</p>
+        {% endif %}
+
         <form method="post">
             <label>Password
                 <input type="password" name="password" style="width:100%; padding:6px;">
             </label>
             <button style="margin-top:15px;">Login</button>
         </form>
-        <p><a href="/">← Back</a></p>
+        <p><a href="{{ url_for('index') }}">← Back</a></p>
     </body>
     </html>
     """
-    return render_template_string(template)
+    return render_template_string(template, error=error)
 
 
 @app.route("/logout")
@@ -84,6 +108,8 @@ def logout():
 # ---------------------------
 # PUBLIC BOOKING PAGE
 # ---------------------------
+
+
 @app.route("/")
 def index():
     conn = get_db()
@@ -93,7 +119,10 @@ def index():
 
     bookings_per_day = {}
     for d in sats:
-        c.execute("SELECT COUNT(*) as cnt FROM bookings WHERE visit_date = ?", (d.isoformat(),))
+        c.execute(
+            "SELECT COUNT(*) as cnt FROM bookings WHERE visit_date = ?",
+            (d.isoformat(),),
+        )
         bookings_per_day[d] = c.fetchone()["cnt"]
 
     conn.close()
@@ -113,11 +142,21 @@ def index():
             .btn-primary { background: #007bff; color: white; }
             .btn-disabled { background: #aaa; color: #eee; cursor: not-allowed; }
             .flash { padding: 8px 10px; border-radius: 4px; margin-bottom: 10px; }
+            .flash-error { background: #f8d7da; }
+            .flash-success { background: #d4edda; }
         </style>
     </head>
     <body>
         <h1>Book a Visit</h1>
         <p>Choose a Saturday. Max 2 visitors per day.</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, msg in messages %}
+              <div class="flash flash-{{ category }}">{{ msg }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
 
         {% for d, count in days %}
             <div class="date-card {% if count >= 2 %}full{% else %}available{% endif %}">
@@ -146,6 +185,8 @@ def index():
 # ---------------------------
 # BOOKING FORM
 # ---------------------------
+
+
 @app.route("/book", methods=["GET", "POST"])
 def book():
     if request.method == "GET":
@@ -154,31 +195,34 @@ def book():
         visit_date_str = request.form.get("visit_date")
 
     if not visit_date_str:
-        flash(("error", "No date selected."))
+        flash("No date selected.", "error")
         return redirect(url_for("index"))
 
     try:
         visit_date = datetime.strptime(visit_date_str, "%Y-%m-%d").date()
     except ValueError:
-        flash(("error", "Invalid date."))
+        flash("Invalid date.", "error")
         return redirect(url_for("index"))
 
     if visit_date.weekday() != 5:
-        flash(("error", "Only Saturdays allowed."))
+        flash("Only Saturdays can be booked.", "error")
         return redirect(url_for("index"))
 
     if visit_date < date.today():
-        flash(("error", "Cannot book past dates."))
+        flash("You cannot book a past date.", "error")
         return redirect(url_for("index"))
 
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) as cnt FROM bookings WHERE visit_date = ?", (visit_date.isoformat(),))
+    c.execute(
+        "SELECT COUNT(*) as cnt FROM bookings WHERE visit_date = ?",
+        (visit_date.isoformat(),),
+    )
     booked = c.fetchone()["cnt"]
 
     if booked >= 2:
         conn.close()
-        flash(("error", "This day is full."))
+        flash("This day is already full.", "error")
         return redirect(url_for("index"))
 
     if request.method == "POST":
@@ -186,24 +230,44 @@ def book():
         email = request.form.get("email", "").strip()
 
         if not name or not email:
-            flash(("error", "Fill all fields."))
+            flash("Please fill in your name and email.", "error")
             conn.close()
             return redirect(url_for("book") + f"?date={visit_date_str}")
 
         c.execute(
             "INSERT INTO bookings (visit_date, name, email, created_at) VALUES (?, ?, ?, ?)",
-            (visit_date.isoformat(), name, email, datetime.utcnow().isoformat())
+            (visit_date.isoformat(), name, email, datetime.utcnow().isoformat()),
         )
         conn.commit()
         conn.close()
-        flash(("success", "Your visit has been booked."))
+        flash("Your visit has been booked.", "success")
         return redirect(url_for("index"))
 
     template = """
     <!doctype html>
     <html>
-    <body style="font-family: sans-serif; max-width: 600px; margin: 20px auto;">
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 0 10px; }
+            label { display: block; margin-top: 10px; }
+            input { width: 100%; padding: 6px; margin-top: 4px; box-sizing: border-box; }
+            .btn { margin-top: 15px; padding: 8px 12px; border-radius: 4px; border: none; background: #007bff; color: white; cursor: pointer; }
+            .flash { padding: 8px 10px; border-radius: 4px; margin-bottom: 10px; }
+            .flash-error { background: #f8d7da; }
+        </style>
+    </head>
+    <body>
         <h2>Book for {{ visit_date.strftime("%A %d %B %Y") }}</h2>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, msg in messages %}
+              <div class="flash flash-{{ category }}">{{ msg }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
         <form method="post">
             <input type="hidden" name="visit_date" value="{{ visit_date.isoformat() }}">
             <label>Name
@@ -212,9 +276,9 @@ def book():
             <label>Email
                 <input type="email" name="email" required>
             </label>
-            <button style="margin-top:10px;">Confirm</button>
+            <button class="btn" type="submit">Confirm</button>
         </form>
-        <p><a href="/">← Back</a></p>
+        <p><a href="{{ url_for('index') }}">← Back</a></p>
     </body>
     </html>
     """
@@ -223,8 +287,10 @@ def book():
 
 
 # ---------------------------
-# ADMIN PAGE (PROTECTED)
+# ADMIN PAGE + DELETE
 # ---------------------------
+
+
 @app.route("/admin")
 def admin():
     if not session.get("admin"):
@@ -239,12 +305,27 @@ def admin():
     template = """
     <!doctype html>
     <html>
-    <body style="font-family: sans-serif; max-width: 800px; margin: 20px auto;">
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: sans-serif; max-width: 900px; margin: 20px auto; padding: 0 10px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ccc; padding: 6px 8px; }
+            th { background: #eee; }
+            form { margin: 0; }
+            button { padding: 4px 8px; }
+        </style>
+    </head>
+    <body>
         <h1>All bookings</h1>
         <p><a href="{{ url_for('logout') }}">Logout</a></p>
-        <table border="1" cellpadding="6">
+        <table>
             <tr>
-                <th>Date</th><th>Name</th><th>Email</th><th>Booked at (UTC)</th>
+                <th>Date</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Booked at (UTC)</th>
+                <th>Actions</th>
             </tr>
             {% for r in rows %}
             <tr>
@@ -252,18 +333,40 @@ def admin():
                 <td>{{ r["name"] }}</td>
                 <td>{{ r["email"] }}</td>
                 <td>{{ r["created_at"] }}</td>
+                <td>
+                    <form method="post" action="{{ url_for('delete_booking', booking_id=r['id']) }}" onsubmit="return confirm('Delete this booking?');">
+                        <button type="submit">Delete</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </table>
+        <p><a href="{{ url_for('index') }}">← Back to site</a></p>
     </body>
     </html>
     """
     return render_template_string(template, rows=rows)
 
 
+@app.route("/admin/delete/<int:booking_id>", methods=["POST"])
+def delete_booking(booking_id):
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
+    conn.commit()
+    conn.close()
+
+    flash("Booking deleted.", "success")
+    return redirect(url_for("admin"))
+
+
 # ---------------------------
-# START APP
+# START APP (local dev)
 # ---------------------------
+
 if __name__ == "__main__":
     if not os.path.exists(DB_PATH):
         init_db()
