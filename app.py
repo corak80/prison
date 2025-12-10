@@ -47,6 +47,10 @@ def init_db():
     conn.close()
 
 
+# ✅ RUN DB INIT WHEN THE APP IS IMPORTED (important for Render/gunicorn)
+init_db()
+
+
 def next_saturdays(n=8):
     """Return list of next n Saturdays as date objects."""
     today = date.today()
@@ -408,5 +412,6 @@ def delete_booking(booking_id):
 # ---------------------------
 
 if __name__ == "__main__":
+    # init_db() already called at import, but harmless to call again
     init_db()
     app.run(debug=True)
