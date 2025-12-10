@@ -16,7 +16,8 @@ app = Flask(__name__)
 # Change this to something random in production
 app.secret_key = "change-this-secret-key"
 
-DB_PATH = "prison_visits.db"
+# New DB file so we can use new schema without conflict
+DB_PATH = "prison_visits_v2.db"
 
 
 def get_db():
@@ -33,7 +34,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             visit_date DATE NOT NULL,
-            name TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            ssn TEXT NOT NULL,
+            phone TEXT NOT NULL,
             email TEXT NOT NULL,
             created_at DATETIME NOT NULL
         )
@@ -226,17 +230,32 @@ def book():
         return redirect(url_for("index"))
 
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
+        first_name = request.form.get("first_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
+        ssn = request.form.get("ssn", "").strip()
+        phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
 
-        if not name or not email:
-            flash("Please fill in your name and email.", "error")
+        if not (first_name and last_name and ssn and phone and email):
+            flash("Please fill in all fields.", "error")
             conn.close()
             return redirect(url_for("book") + f"?date={visit_date_str}")
 
         c.execute(
-            "INSERT INTO bookings (visit_date, name, email, created_at) VALUES (?, ?, ?, ?)",
-            (visit_date.isoformat(), name, email, datetime.utcnow().isoformat()),
+            """
+            INSERT INTO bookings (
+                visit_date, first_name, last_name, ssn, phone, email, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                visit_date.isoformat(),
+                first_name,
+                last_name,
+                ssn,
+                phone,
+                email,
+                datetime.utcnow().isoformat(),
+            ),
         )
         conn.commit()
         conn.close()
@@ -270,12 +289,27 @@ def book():
 
         <form method="post">
             <input type="hidden" name="visit_date" value="{{ visit_date.isoformat() }}">
-            <label>Name
-                <input type="text" name="name" required>
+
+            <label>First name
+                <input type="text" name="first_name" required>
             </label>
+
+            <label>Last name
+                <input type="text" name="last_name" required>
+            </label>
+
+            <label>Social security number
+                <input type="text" name="ssn" required>
+            </label>
+
+            <label>Phone number
+                <input type="text" name="phone" required>
+            </label>
+
             <label>Email
                 <input type="email" name="email" required>
             </label>
+
             <button class="btn" type="submit">Confirm</button>
         </form>
         <p><a href="{{ url_for('index') }}">← Back</a></p>
@@ -308,7 +342,7 @@ def admin():
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: sans-serif; max-width: 900px; margin: 20px auto; padding: 0 10px; }
+            body { font-family: sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 10px; }
             table { border-collapse: collapse; width: 100%; }
             th, td { border: 1px solid #ccc; padding: 6px 8px; }
             th { background: #eee; }
@@ -322,7 +356,10 @@ def admin():
         <table>
             <tr>
                 <th>Date</th>
-                <th>Name</th>
+                <th>First</th>
+                <th>Last</th>
+                <th>SSN</th>
+                <th>Phone</th>
                 <th>Email</th>
                 <th>Booked at (UTC)</th>
                 <th>Actions</th>
@@ -330,7 +367,10 @@ def admin():
             {% for r in rows %}
             <tr>
                 <td>{{ r["visit_date"] }}</td>
-                <td>{{ r["name"] }}</td>
+                <td>{{ r["first_name"] }}</td>
+                <td>{{ r["last_name"] }}</td>
+                <td>{{ r["ssn"] }}</td>
+                <td>{{ r["phone"] }}</td>
                 <td>{{ r["email"] }}</td>
                 <td>{{ r["created_at"] }}</td>
                 <td>
@@ -368,8 +408,5 @@ def delete_booking(booking_id):
 # ---------------------------
 
 if __name__ == "__main__":
-    if not os.path.exists(DB_PATH):
-        init_db()
-    else:
-        init_db()
+    init_db()
     app.run(debug=True)
